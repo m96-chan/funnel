@@ -1,0 +1,22 @@
+# Node / TypeScript
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.local
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+*.keystore
+*.jks
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/

@@ -94,6 +94,25 @@ Funnel is built around **WebRTC** for low-latency, adaptive audio/video, with a 
 
 > These are recommended defaults, not final decisions — the architecture (registry + signaling broker + P2P WebRTC) holds regardless of the specific server language or dashboard framework.
 
+## Repository layout
+
+This is a monorepo holding the Android app, the server, and the dashboard, so the app↔server contract stays in sync in one place.
+
+```
+funnel/
+├── android/          # Kotlin + CameraX APK (publisher) — see android/README.md
+├── server/           # Node/TS registry + signaling broker — see server/README.md
+├── dashboard/        # React web UI (subscriber) — see dashboard/README.md
+├── shared/           # signaling types / protocol contract shared by all sides
+├── docs/
+│   └── protocol.md   # the app ↔ server ↔ client wire contract, documented once
+├── infra/            # coturn (STUN/TURN), docker-compose, env templates
+├── README.md
+└── LICENSE
+```
+
+The single most important seam is [`docs/protocol.md`](./docs/protocol.md) — the signaling and registration contract that every component agrees on.
+
 ## Components
 
 | Component        | Role                                                              |
