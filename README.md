@@ -156,7 +156,7 @@ The dashboard defaults to `ws://localhost:8080/ws` and the app to `ws://10.0.2.2
 | `android/`    | Signaling, camera + mic capture, answer/ICE, foreground service.                          |
 | `infra/`      | docker-compose (server + Redis + coturn) and TURN config. No TLS certificates.            |
 
-First run is the real test: `npm install && npm run typecheck` at the root, then `cd android && gradle wrapper && ./gradlew assembleDebug`.
+CI builds all of it on every pull request — the TypeScript workspaces and a debug APK — and every merge to `main` publishes that APK to a [GitHub Release](../../releases). Those releases are **debug-signed**: fine for a development phone, not shippable.
 
 Outstanding across the repo: real auth/pairing (today it is one shared token), TLS termination for `wss://`, and moving the registry off the in-memory map onto Redis. Each component's README lists its own gaps.
 
