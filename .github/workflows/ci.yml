@@ -71,3 +71,51 @@ jobs:
           name: funnel-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  release:
+    name: release
+    needs: [node, android]
+    # Only for merges into main. On a pull request the APK is still built and
+    # kept as a run artifact — it just is not published.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reuses the APK the android job already built rather than building twice.
+      - uses: actions/download-artifact@v4
+        with:
+          name: funnel-debug-apk
+          path: apk
+
+      - name: Name the release
+        id: meta
+        run: |
+          version=$(grep -oP 'versionName = "\K[^"]+' android/app/build.gradle.kts)
+          tag="v${version}-build.${{ github.run_number }}"
+          mv apk/app-debug.apk "apk/funnel-${tag}-debug.apk"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            apk/*.apk \
+            --title "Funnel ${{ steps.meta.outputs.version }} (build ${{ github.run_number }})" \
+            --prerelease \
+            --notes "Built from \`${{ github.sha }}\` on \`main\`.
+
+          **This APK is signed with the Android debug key.** It installs on a
+          development device and nothing else — it cannot be shipped, and it
+          will not upgrade an APK signed with any other key. Publishing a real
+          build means adding a keystore to the repository secrets and an
+          \`assembleRelease\` step.
+
+          Point the app at your signaling server with the **Server URL** field;
+          see [android/README.md](https://github.com/${{ github.repository }}/blob/main/android/README.md)."
