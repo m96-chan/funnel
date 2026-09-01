@@ -165,8 +165,15 @@ class PublisherSession(
     private open inner class SdpObserverAdapter(private val op: String) : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription?) = Unit
         override fun onSetSuccess() = Unit
-        override fun onCreateFailure(error: String?) = Log.e(TAG, "[$sessionId] $op: $error")
-        override fun onSetFailure(error: String?) = Log.e(TAG, "[$sessionId] $op: $error")
+        // Block bodies, not `= Log.e(...)`: Log.e returns Int, which would make
+        // these overrides return Int and stop overriding SdpObserver at all.
+        override fun onCreateFailure(error: String?) {
+            Log.e(TAG, "[$sessionId] $op: $error")
+        }
+
+        override fun onSetFailure(error: String?) {
+            Log.e(TAG, "[$sessionId] $op: $error")
+        }
     }
 
     private companion object {
