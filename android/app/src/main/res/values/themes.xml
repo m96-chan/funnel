@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws the real UI; this only needs to survive activity startup
+         without a title bar or a flash of the wrong background. -->
+    <style name="Theme.Funnel" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

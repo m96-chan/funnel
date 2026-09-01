@@ -2,9 +2,13 @@
 node_modules/
 dist/
 build/
+*.tsbuildinfo
 *.log
 .env
 .env.local
+
+# Cloudflare / Wrangler
+.wrangler/
 
 # Android / Gradle
 android/.gradle/

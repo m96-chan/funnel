@@ -1,0 +1,21 @@
+{
+  "name": "funnel",
+  "private": true,
+  "version": "0.0.0",
+  "license": "MIT",
+  "description": "Turn spare Android phones into on-demand remote cameras and microphones.",
+  "workspaces": [
+    "shared",
+    "server",
+    "dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev:server": "npm run dev --workspace @funnel/server",
+    "dev:dashboard": "npm run dev --workspace @funnel/dashboard"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
