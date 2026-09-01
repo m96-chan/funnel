@@ -81,15 +81,17 @@ Funnel is built around **WebRTC** for low-latency, adaptive audio/video, with a 
 
 | Layer            | Choice                          | Why                                                                 |
 | ---------------- | ------------------------------- | ------------------------------------------------------------------- |
-| Android app      | **Kotlin** + **CameraX**        | Modern camera API, lifecycle-aware capture, wide device support.    |
-| App capture      | **AudioRecord** (mic)           | Raw PCM audio feed into the WebRTC pipeline.                        |
+| Android app      | **Kotlin** + **Jetpack Compose** | Current Android defaults; the UI is a thin shell over the service.  |
+| App capture      | **libwebrtc** Camera2 capturer  | Texture frames straight to the hardware encoder — no CPU YUV copy.  |
+| App audio        | **JavaAudioDeviceModule**       | libwebrtc owns `AudioRecord`; no PCM handled by hand.               |
 | Media transport  | **WebRTC** (`libwebrtc`)        | Low-latency, adaptive, encrypted (SRTP) A/V; P2P after signaling.  |
 | Foreground work  | **Foreground Service**          | Keeps capture alive with the screen off; user-visible notification. |
 | Server           | **Node.js** + **TypeScript**    | Fast to build; shares WebRTC/JS ecosystem with the dashboard.       |
 | Signaling        | **WebSocket** (`ws`)            | Bidirectional, low-overhead SDP/ICE relay + heartbeats.             |
 | Registry / state | **Redis** (or in-memory)        | Fast device presence tracking with TTL-based expiry.                |
 | NAT traversal    | **coturn** (STUN/TURN)          | Establishes connectivity across NAT/CGNAT.                          |
-| Dashboard        | **React** + WebRTC browser APIs | View/listen in the browser; select and manage devices.             |
+| Dashboard        | **React** + **Vite**            | View/listen in the browser; select and manage devices.             |
+| Dashboard hosting| **Cloudflare Workers** (assets) | Static SPA at the edge; no server to run, no state in the Worker.  |
 | Auth / pairing   | **Token / QR pairing** + TLS    | Authenticated device onboarding; encrypted signaling (WSS).         |
 
 > These are recommended defaults, not final decisions — the architecture (registry + signaling broker + P2P WebRTC) holds regardless of the specific server language or dashboard framework.
@@ -102,14 +104,18 @@ This is a monorepo holding the Android app, the server, and the dashboard, so th
 funnel/
 ├── android/          # Kotlin + CameraX APK (publisher) — see android/README.md
 ├── server/           # Node/TS registry + signaling broker — see server/README.md
-├── dashboard/        # React web UI (subscriber) — see dashboard/README.md
+├── dashboard/        # React SPA on Cloudflare Workers (subscriber) — see dashboard/README.md
 ├── shared/           # signaling types / protocol contract shared by all sides
 ├── docs/
 │   └── protocol.md   # the app ↔ server ↔ client wire contract, documented once
 ├── infra/            # coturn (STUN/TURN), docker-compose, env templates
+├── package.json      # npm workspaces root: shared + server + dashboard
+├── tsconfig.base.json
 ├── README.md
 └── LICENSE
 ```
+
+`shared/`, `server/` and `dashboard/` are npm workspaces, so one `npm install` at the root wires all three together. `android/` is a separate Gradle build and mirrors the protocol by hand.
 
 The single most important seam is [`docs/protocol.md`](./docs/protocol.md) — the signaling and registration contract that every component agrees on.
 
@@ -121,9 +127,38 @@ The single most important seam is [`docs/protocol.md`](./docs/protocol.md) — t
 | Dashboard/Server | Registry of devices, selection UI, and stream broker.             |
 | Client           | Consumes the selected phone's feed (browser / virtual cam / app). |
 
+## Getting started
+
+```bash
+# 1. signaling server + TURN + Redis
+cd infra && cp .env.example .env && docker compose up --build
+#    or, without Docker:  npm install && npm run dev:server
+
+# 2. dashboard
+npm install          # from the repo root — sets up all three workspaces
+npm run dev:dashboard
+
+# 3. phone
+cd android && gradle wrapper && ./gradlew installDebug
+```
+
+The dashboard defaults to `ws://localhost:8080/ws` and the app to `ws://10.0.2.2:8080/ws` (the host, as seen from the Android emulator). Each component's README covers its own configuration.
+
 ## Status
 
-🚧 Early stage — this repository currently defines the concept and roadmap. Implementation is in progress.
+🚧 Early stage. Every piece of the path is now implemented — register, discover, offer/answer, capture, stream — but **none of it has been compiled or run yet**. Treat the table below as "written", not "verified".
+
+| Component     | Implemented                                                                             |
+| ------------- | --------------------------------------------------------------------------------------- |
+| `shared/`     | Protocol types and helpers — the contract every side compiles against.                   |
+| `server/`     | Handshake, in-memory registry with TTL presence, discovery pushes, signaling relay.       |
+| `dashboard/`  | Device list, offer/answer, trickle ICE, remote video. Deploys to Cloudflare Workers.      |
+| `android/`    | Signaling, camera + mic capture, answer/ICE, foreground service.                          |
+| `infra/`      | docker-compose (server + Redis + coturn) and TURN config. No TLS certificates.            |
+
+First run is the real test: `npm install && npm run typecheck` at the root, then `cd android && gradle wrapper && ./gradlew assembleDebug`.
+
+Outstanding across the repo: real auth/pairing (today it is one shared token), TLS termination for `wss://`, and moving the registry off the in-memory map onto Redis. Each component's README lists its own gaps.
 
 ## License
 

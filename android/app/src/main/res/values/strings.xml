@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Funnel</string>
+
+    <string name="server_url">Server URL</string>
+    <string name="device_name">Device name</string>
+    <string name="start_publishing">Start publishing</string>
+    <string name="stop_publishing">Stop publishing</string>
+    <string name="grant_permissions">Grant camera &amp; mic permissions</string>
+
+    <string name="notification_channel_name">Publishing</string>
+    <string name="notification_channel_description">Shown while this phone is available as a remote camera/mic.</string>
+    <string name="notification_title">Funnel is publishing</string>
+    <string name="notification_text">Camera and microphone are available to the dashboard.</string>
+</resources>

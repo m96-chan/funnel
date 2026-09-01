@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "funnel-dashboard",
+  "compatibility_date": "2026-01-01",
+
+  // Assets only: the Worker serves the built SPA and nothing else. Signaling
+  // goes straight from the browser to the Node server in ../server, so there is
+  // no script, no state and no bindings here on purpose.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

@@ -1,0 +1,35 @@
+# Build-context excludes for server.Dockerfile.
+#
+# BuildKit looks for `<dockerfile-path>.dockerignore` before falling back to a
+# `.dockerignore` at the context root — which is how this file can live under
+# infra/ while the build context is the repository root. Every pattern below is
+# therefore relative to the REPO ROOT, not to infra/.
+#
+# Without this, the whole repo (Gradle caches, node_modules, .git) would be
+# uploaded to the daemon on every build.
+
+.git
+.gitignore
+
+# Host-built artifacts: the image builds its own.
+node_modules
+**/node_modules
+**/dist
+**/build
+
+# Nothing in the image comes from these.
+android
+dashboard/src
+dashboard/index.html
+dashboard/vite.config.ts
+docs
+infra
+
+# Secrets must never enter a layer. .env.example is fine, real .env files are not.
+**/.env
+**/.env.local
+
+*.log
+.DS_Store
+.vscode
+.idea

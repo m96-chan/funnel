@@ -1,14 +1,14 @@
 # Funnel Protocol
 
-The wire contract between the **Android app** (publisher), the **server** (registry + signaling broker), and the **dashboard/client** (subscriber). This document is the single source of truth for the app↔server↔client seam.
+The wire contract between the **Android app** (publisher), the **server** (registry + signaling broker), and the **dashboard/client** (subscriber). This document is the prose; [`shared/src/protocol.ts`](../shared/src/protocol.ts) is the same contract as enforced TypeScript. When the two disagree, the TypeScript wins — and one of them is a bug.
 
-> Status: 🚧 Draft — message shapes below are a starting point and will change as implementation lands.
+> Status: v1. Message shapes below are implemented by the server and the dashboard, and mirrored by hand in Kotlin for the Android app.
 
 ## Transport
 
-- **Signaling:** WebSocket over TLS (`wss://`). One persistent connection per app and per client.
+- **Signaling:** WebSocket over TLS (`wss://`), endpoint `/ws`. One persistent connection per app and per client.
 - **Media:** WebRTC (SRTP), peer-to-peer between phone and client. Never passes through the server.
-- **NAT traversal:** STUN for address discovery, TURN (coturn) as a relay fallback.
+- **NAT traversal:** STUN for address discovery, TURN (coturn) as a relay fallback. The server hands both peers the same `iceServers` list in `hello-ack`, so neither side hardcodes them.
 
 ## Roles
 
@@ -27,52 +27,116 @@ All signaling messages share a common JSON envelope:
   "type": "<message-type>",
   "from": "<sender-id>",
   "to": "<recipient-id | null>",
+  "requestId": "<opaque | omitted>",
   "payload": { }
 }
 ```
 
-## Message types (draft)
+- `to: null` means the message is **for the server** (`hello`, `register`, `heartbeat`, `list-devices`).
+  A non-null `to` means the server **relays it verbatim** to that peer.
+- `from` is **assigned by the server**, not by the sender. The broker overwrites whatever a client puts there before relaying, so a peer id cannot be spoofed.
+  A registered publisher's `from` is its **`deviceId`** — the only identity a subscriber ever sees, since that is what `device-list` carries. A subscriber's `from` is its server-assigned connection id, which the publisher addresses its `answer` back to.
+- `requestId` is optional and echoed back on the reply, for clients that want to correlate.
+
+Only the envelope is validated centrally (`parseEnvelope`); each payload is checked by the handler for its message type.
+
+## Versioning & handshake
+
+Every connection opens with `hello` before anything else. A connection that sends any other message first is closed with `not-registered`.
+
+- `hello` — client → server.
+  ```json
+  { "type": "hello", "to": null, "payload": {
+      "protocolVersion": 1,
+      "role": "publisher",
+      "token": "optional-shared-secret"
+  }}
+  ```
+  `role` is `"publisher"` (app) or `"subscriber"` (dashboard). A `protocolVersion` mismatch is rejected with `protocol-version-mismatch`.
+
+- `hello-ack` — server → client.
+  ```json
+  { "type": "hello-ack", "payload": {
+      "protocolVersion": 1,
+      "id": "server-assigned-connection-id",
+      "iceServers": [{ "urls": "stun:stun.example:3478" }],
+      "heartbeatIntervalMs": 10000
+  }}
+  ```
+
+## Message types
 
 ### Registration & presence (app ↔ server)
 
-- `register` — app announces itself.
+- `register` — app announces itself. Publishers only.
   ```json
-  { "type": "register", "payload": {
+  { "type": "register", "to": null, "payload": {
       "deviceId": "uuid",
       "name": "Kitchen Pixel 4",
       "capabilities": { "video": true, "audio": true, "maxResolution": "1080p" },
       "battery": 0.87
   }}
   ```
-- `registered` — server ack with assigned session info.
-- `heartbeat` — app → server, periodic; refreshes presence TTL. Carries updated `battery`, `streaming` state.
-- `unregister` — app leaves; server removes it from the active registry.
+  `deviceId` is generated once on first run and persisted, so a reinstalled-and-restarted phone keeps its identity.
+
+- `registered` — server ack, carrying the full `DeviceInfo` as the registry now holds it.
+- `heartbeat` — app → server every `heartbeatIntervalMs`; refreshes presence TTL and carries updated `battery` / `streaming`.
+- `unregister` — app leaves; the server removes it from the active registry and notifies subscribers.
+
+**Presence:** a device with no heartbeat for `PRESENCE_TTL_MS` (30s, three missed beats) is marked `online: false`. It is not deleted — only an explicit `unregister` or a dropped socket removes it.
 
 ### Discovery (dashboard ↔ server)
 
-- `device-list` — dashboard requests / server pushes the current registry.
+- `list-devices` — dashboard → server. `{ "includeOffline": false }`.
+- `device-list` — server → dashboard: the current registry snapshot. Pushed on connect and on request.
   ```json
   { "type": "device-list", "payload": { "devices": [
-      { "deviceId": "uuid", "name": "Kitchen Pixel 4", "online": true, "streaming": false, "battery": 0.87 }
+      { "deviceId": "uuid", "name": "Kitchen Pixel 4",
+        "capabilities": { "video": true, "audio": true, "maxResolution": "1080p" },
+        "online": true, "streaming": false, "battery": 0.87, "lastSeenAt": 1756...  }
   ]}}
   ```
 - `device-updated` — server pushes a single device's status change.
+- `device-removed` — server pushes `{ "deviceId": "uuid" }` when a device leaves.
 
 ### WebRTC signaling (subscriber ↔ publisher, via broker)
 
-- `offer` — subscriber → publisher: SDP offer to start a session.
-- `answer` — publisher → subscriber: SDP answer.
-- `ice-candidate` — either direction: trickled ICE candidate.
-- `session-end` — either direction: tear down the media session.
+These four are the only types the broker relays. All carry a `sessionId`, **generated by the subscriber** when it starts a session, so both ends can tell concurrent sessions apart.
+
+- `offer` — subscriber → publisher: `{ sessionId, sdp }`.
+- `answer` — publisher → subscriber: `{ sessionId, sdp }`.
+- `ice-candidate` — either direction: `{ sessionId, candidate, sdpMid, sdpMLineIndex }`, trickled.
+- `session-end` — either direction: `{ sessionId, reason? }`.
+
+The subscriber is always the offerer: it adds `recvonly` audio and video transceivers and offers; the phone answers `sendonly`.
+
+### Errors
+
+- `error` — server → client, `{ "code": "...", "message": "..." }`.
+
+| Code                        | Meaning                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| `unauthorized`              | Missing or wrong token in `hello`.                         |
+| `protocol-version-mismatch` | `hello.protocolVersion` is not the server's.               |
+| `malformed-message`         | Not JSON, or not a usable envelope.                        |
+| `unknown-device`            | `to` names a device the registry has never seen.           |
+| `device-offline`            | The target device exists but has no live connection.       |
+| `not-registered`            | A message arrived before `hello`, or from the wrong role.  |
+| `internal`                  | Server-side failure.                                       |
 
 ## Lifecycle
 
 ```
-app start ─▶ register ─▶ (heartbeat…) ─▶ answer offer ─▶ stream ─▶ session-end ─▶ unregister
+app start ─▶ hello ─▶ register ─▶ (heartbeat…) ─▶ answer offer ─▶ stream ─▶ session-end ─▶ unregister
+dashboard ─▶ hello ─▶ list-devices ─▶ offer ─▶ (ice…) ─▶ stream ─▶ session-end
 ```
+
+## Reconnection
+
+A dropped WebSocket is **re-register, not resume**. Both sides reconnect with backoff and replay `hello` → `register`; because `deviceId` is stable, the device reappears as itself rather than as a duplicate entry. Any in-flight media session is torn down — session state is not recovered across a signaling reconnect.
 
 ## Open questions
 
-- Authentication / pairing: token vs. QR handshake, and where it sits in the envelope.
-- Whether the server ever transcodes or records (default: no — pure P2P).
-- Reconnection semantics after a dropped WebSocket (resume vs. re-register).
+- **Authentication.** Today `hello.token` is a single shared secret for the whole deployment, which is enough for a home LAN and not enough for anything else. Per-device tokens issued through a QR pairing flow are the intended replacement.
+- **Recording / transcoding.** Not done, and deliberately: the server is not in the media path. Adding either means adding an SFU, which is a different architecture.
+- **Multiple subscribers per phone.** The protocol allows it (sessions are keyed by `sessionId`), but the phone has to encode a stream per subscriber. Untested beyond one.

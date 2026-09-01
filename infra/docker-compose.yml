@@ -1,0 +1,90 @@
+# Funnel local stack: signaling server + Redis + coturn (STUN/TURN).
+#
+#   cp .env.example .env   # then edit it
+#   docker compose up --build
+#
+# Run from this directory (infra/). The server image builds from the repo root
+# because it is an npm workspace; see server.Dockerfile.
+
+name: funnel
+
+services:
+  # -------------------------------------------------------------------------
+  # Signaling server — device registry + WebRTC signaling broker.
+  # Carries SDP/ICE and heartbeats only; media never passes through it.
+  # -------------------------------------------------------------------------
+  server:
+    build:
+      # The context is the repository root, not infra/, so npm can see the
+      # workspace tree (`shared/` is a dependency of `server/`).
+      context: ..
+      dockerfile: infra/server.Dockerfile
+    image: funnel/server:dev
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # Host:container. Both sides follow PORT so changing one value in .env is
+      # enough — the server binds PORT inside the container too.
+      - "${PORT:-8080}:${PORT:-8080}"
+    # The Dockerfile's HEALTHCHECK hits /healthz; `docker compose ps` surfaces it.
+    # No depends_on redis: the server does not talk to it yet, and coupling
+    # startup to a service it ignores only creates a way for it to fail to boot.
+
+  # -------------------------------------------------------------------------
+  # Redis.
+  #
+  # NOT YET USED BY THE SERVER. The initial device registry is in-memory
+  # (see server/src — presence lives in a Map with a TTL sweep). Redis is here
+  # so the presence store can move to it later without a compose change: it
+  # gives TTL-based expiry that survives a server restart and lets more than
+  # one server instance share one registry.
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly so the registry survives a container restart once it is used.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # Deliberately not published to the host: only the server needs it, and an
+    # unauthenticated Redis on a public port is a well-known way to lose a box.
+
+  # -------------------------------------------------------------------------
+  # coturn — STUN (address discovery) and TURN (media relay).
+  #
+  # network_mode: host is not optional here.
+  #
+  #   1. A TURN relay allocates one UDP port per session out of a wide range
+  #      (min-port..max-port in turnserver.conf). Publishing thousands of UDP
+  #      ports through Docker is impractical — the daemon spawns bookkeeping
+  #      per port and startup crawls.
+  #   2. More importantly, Docker's userland proxy / NAT rewrites source
+  #      addresses. coturn hands peers the address it believes it owns, so
+  #      relayed candidates come out with a container-internal address and the
+  #      remote peer tries to reach 172.x.x.x. ICE then fails in exactly the
+  #      case TURN exists to fix.
+  #
+  # The cost: on Linux this binds directly to the host's interfaces, and
+  # host networking is a no-op on Docker Desktop for macOS/Windows — run coturn
+  # on a Linux host (or natively) if you need TURN to actually work there.
+  # -------------------------------------------------------------------------
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    # Explicit config path + log to stdout so `docker compose logs coturn` works.
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --log-file=stdout
+
+volumes:
+  redis-data:
